@@ -1,5 +1,6 @@
 import tkinter as tk
 import customtkinter
+from tkcalendar import Calendar
 import sqlite3
 import datetime
 
@@ -37,14 +38,16 @@ def initialize_created_at():
     conn.commit()
 
 # Функция для сохранения новой заметки
-def save_note(event=None):
+def save_note():
     note_text = note_entry.get("1.0", tk.END).strip()  # Получаем текст из текстового поля
+    if not note_text:  # Проверяем, если текст заметки пустой, не сохраняем заметку
+        return
     note_lines = note_text.split("\n")
     if not note_lines:
         return
     title = note_lines[0].upper()  # Заголовок - первая строка, преобразованная в верхний регистр
     content = "\n".join(note_lines[1:])  # Содержание - все остальные строки
-    created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Время создания заметки
+    created_at = calendar.get_date() + " " + datetime.datetime.now().strftime("%H:%M:%S")  # Время создания заметки
     cur.execute("INSERT INTO notes (title, content, created_at) VALUES (?, ?, ?)", (title, content, created_at))
     conn.commit()
     update_notes_list()
@@ -64,6 +67,21 @@ def delete_note_from_edit(note_id, edit_window):
     update_notes_list()
     edit_window.destroy()
 
+# Функция для удаления выбранной заметки
+def delete_selected_note():
+    index = notes_list.curselection()
+    if index:
+        selected_note = notes_list.get(index)
+        if not selected_note[0].isdigit():  # Проверяем, что это не дата
+            cur.execute("SELECT id FROM notes WHERE title=?", (selected_note.strip(),))
+            note = cur.fetchone()
+            if note:
+                note_id = note[0]
+                cur.execute("DELETE FROM notes WHERE id=?", (note_id,))
+                conn.commit()
+                update_notes_list()
+
+# Функция для редактирования заметки
 # Функция для редактирования заметки
 def edit_note():
     index = notes_list.curselection()  # Получаем выбранную заметку
@@ -95,6 +113,15 @@ def edit_note():
             edit_title_entry = customtkinter.CTkEntry(top_frame, textvariable=edited_title)
             edit_title_entry.pack(pady=5)
 
+            date_label = customtkinter.CTkLabel(top_frame, text="Измените дату заметки:",
+                                                font=("Roboto", 12), text_color="#555657")
+            date_label.pack(pady=5)
+
+            edit_calendar = Calendar(top_frame, selectmode='day', date_pattern='yyyy-MM-dd')
+            edit_calendar.pack(pady=5)
+
+            edit_calendar.selection_set(note[3].split(" ")[0])
+
             bottom_frame = tk.Frame(edit_window, bg="burlywood")
             bottom_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -110,7 +137,8 @@ def edit_note():
                                                   command=lambda: save_edited_note(edit_window, note[0],
                                                                                    edited_title.get(),
                                                                                    edit_content_entry.get("1.0",
-                                                                                                          tk.END).strip()),
+                                                                                                          tk.END).strip(),
+                                                                                   edit_calendar.get_date()),
                                                   fg_color="burlywood", text_color="#555657")
             save_button.pack(pady=5)
 
@@ -122,8 +150,9 @@ def edit_note():
             edit_window.protocol("WM_DELETE_WINDOW", lambda: edit_window.grab_release() or edit_window.destroy())
 
 # Функция для сохранения изменений заметки
-def save_edited_note(edit_window, note_id, new_title, new_content):
-    cur.execute("UPDATE notes SET title=?, content=? WHERE id=?", (new_title, new_content, note_id))
+def save_edited_note(edit_window, note_id, new_title, new_content, new_date):
+    new_datetime = new_date + " " + datetime.datetime.now().strftime("%H:%M:%S")
+    cur.execute("UPDATE notes SET title=?, content=?, created_at=? WHERE id=?", (new_title, new_content, new_datetime, note_id))
     conn.commit()
     update_notes_list()
     edit_window.grab_release()
@@ -165,6 +194,10 @@ def add_note_with_tab(event):
     if event.keysym == "Tab":
         save_note()
 
+# Функция для обработки нажатия клавиши Delete для удаления заметки
+def on_delete_key(event):
+    delete_selected_note()
+
 # Инициализация главного окна
 root = customtkinter.CTk()
 root.title("Приложение для заметок")
@@ -180,10 +213,15 @@ note_entry = tk.Text(root, height=5, width=50, bg="burlywood", font=("Robotto", 
 note_entry.pack(pady=5)
 note_entry.bind("<Tab>", add_note_with_tab)
 
+# Выбор даты для новой заметки
+calendar = Calendar(root, selectmode='day', date_pattern='yyyy-MM-dd')
+calendar.pack(pady=5)
+
 # Список для отображения заметок
 notes_list = tk.Listbox(root, width=50, height=10, bg="burlywood", font=("Robotto", 16))
 notes_list.pack(pady=5)
 notes_list.bind("<Double-Button-1>", on_note_double_click)
+notes_list.bind("<Delete>", on_delete_key) # Привязываем удаление заметки к клавише Delete
 
 # Полоса прокрутки для списка заметок
 scrollbar = tk.Scrollbar(root, orient=tk.VERTICAL)
@@ -206,4 +244,4 @@ note_entry.bind("<KeyRelease>", capitalize_first_letter)
 
 # Запуск главного цикла приложения
 root.mainloop()
-conn.close()  # Закрываем соединение с базой данных после закрытия приложения
+conn.close() # Закрываем соединение с базой данных после закрытия приложения
