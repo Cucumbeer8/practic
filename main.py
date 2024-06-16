@@ -3,6 +3,10 @@ import customtkinter
 from tkcalendar import Calendar
 import sqlite3
 import datetime
+import threading
+import tkinter.messagebox
+import time
+import winsound  # Импортируем модуль winsound для воспроизведения звуков
 
 # Функция для инициализации базы данных
 def db_start():
@@ -10,7 +14,7 @@ def db_start():
     conn = sqlite3.connect('notes.db')  # Подключаемся к базе данных 'notes.db'
     cur = conn.cursor()
     # Создаем таблицу 'notes', если она не существует
-    cur.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, title TEXT, content TEXT, created_at TEXT)")
+    cur.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, title TEXT, content TEXT, created_at TEXT, notified INTEGER)")
     conn.commit()
 
     # Проверяем, существуют ли необходимые столбцы и добавляем их, если нет
@@ -24,6 +28,9 @@ def db_start():
         conn.commit()
     if 'created_at' not in columns:
         cur.execute("ALTER TABLE notes ADD COLUMN created_at TEXT")
+        conn.commit()
+    if 'notified' not in columns:
+        cur.execute("ALTER TABLE notes ADD COLUMN notified INTEGER DEFAULT 0")
         conn.commit()
 
 # Функция для инициализации столбца created_at, если он пуст
@@ -48,7 +55,7 @@ def save_note():
     title = note_lines[0].upper()  # Заголовок - первая строка, преобразованная в верхний регистр
     content = "\n".join(note_lines[1:])  # Содержание - все остальные строки
     created_at = calendar.get_date() + " " + datetime.datetime.now().strftime("%H:%M:%S")  # Время создания заметки
-    cur.execute("INSERT INTO notes (title, content, created_at) VALUES (?, ?, ?)", (title, content, created_at))
+    cur.execute("INSERT INTO notes (title, content, created_at, notified) VALUES (?, ?, ?, ?)", (title, content, created_at, 0))
     conn.commit()
     update_notes_list()
     note_entry.delete("1.0", tk.END)  # Очищаем текстовое поле
@@ -82,7 +89,6 @@ def delete_selected_note():
                 update_notes_list()
 
 # Функция для редактирования заметки
-# Функция для редактирования заметки
 def edit_note():
     index = notes_list.curselection()  # Получаем выбранную заметку
     if index:
@@ -105,15 +111,15 @@ def edit_note():
             top_frame = tk.Frame(edit_window, bg="burlywood")
             top_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
 
-            edit_title_label = customtkinter.CTkLabel(top_frame, text="Измените заголовок заметки:",
-                                                      font=("Roboto", 12), text_color="#555657")
-            edit_title_label.pack(pady=5)
+            title_label = customtkinter.CTkLabel(top_frame, text="Измените заголовок заметки:",
+                                                 font=("Roboto", 12), text_color="#555657")
+            title_label.pack(pady=5)
 
-            edited_title = tk.StringVar(value=note[1])
-            edit_title_entry = customtkinter.CTkEntry(top_frame, textvariable=edited_title)
-            edit_title_entry.pack(pady=5)
+            edited_title = customtkinter.CTkEntry(top_frame, width=300, fg_color="burlywood", text_color="#555657")
+            edited_title.insert(0, note[1])
+            edited_title.pack(pady=5)
 
-            date_label = customtkinter.CTkLabel(top_frame, text="Измените дату заметки:",
+            date_label = customtkinter.CTkLabel(top_frame, text="Измените дату и время создания заметки:",
                                                 font=("Roboto", 12), text_color="#555657")
             date_label.pack(pady=5)
 
@@ -152,7 +158,7 @@ def edit_note():
 # Функция для сохранения изменений заметки
 def save_edited_note(edit_window, note_id, new_title, new_content, new_date):
     new_datetime = new_date + " " + datetime.datetime.now().strftime("%H:%M:%S")
-    cur.execute("UPDATE notes SET title=?, content=?, created_at=? WHERE id=?", (new_title, new_content, new_datetime, note_id))
+    cur.execute("UPDATE notes SET title=?, content=?, created_at=?, notified=? WHERE id=?", (new_title, new_content, new_datetime, 0, note_id))
     conn.commit()
     update_notes_list()
     edit_window.grab_release()
@@ -198,6 +204,27 @@ def add_note_with_tab(event):
 def on_delete_key(event):
     delete_selected_note()
 
+# Функция для проверки и отображения уведомлений
+def notify():
+    conn = sqlite3.connect('notes.db')
+    cur = conn.cursor()
+    while True:
+        now = datetime.datetime.now().strftime("%Y-%m-%d")
+        cur.execute("SELECT id, title, created_at FROM notes WHERE created_at LIKE ? AND notified = 0", (now + "%",))
+        notes = cur.fetchall()
+        if notes:
+            message = "Заметки на сегодня:\n\n"
+            for note in notes:
+                message += f"- {note[1]}\n"
+            # Воспроизводим звуковой сигнал
+            winsound.Beep(1000, 500)  # Звук частотой 1000 Гц и длительностью 500 мс
+            if tkinter.messagebox.askyesno("Уведомление", message + "\nВы хотите отложить уведомление?"):
+                time.sleep(30)  # Отложить на 30 сек
+            else:
+                cur.execute("UPDATE notes SET notified = 1 WHERE id IN ({})".format(",".join([str(note[0]) for note in notes])))
+                conn.commit()
+        time.sleep(10)  # Проверка каждые 10 секунд
+
 # Инициализация главного окна
 root = customtkinter.CTk()
 root.title("Приложение для заметок")
@@ -241,6 +268,10 @@ update_notes_list()
 
 # Привязка событий к текстовому полю
 note_entry.bind("<KeyRelease>", capitalize_first_letter)
+
+# Запуск функции уведомлений в отдельном потоке
+notification_thread = threading.Thread(target=notify, daemon=True)
+notification_thread.start()
 
 # Запуск главного цикла приложения
 root.mainloop()
